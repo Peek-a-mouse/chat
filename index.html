@@ -304,9 +304,9 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
     <div class="mt">Создать комнату</div>
     <div class="f"><label>Название комнаты</label><input id="crn" type="text" placeholder="gaming, кино, работа..." maxlength="32"></div>
     <div class="tr"><span>🔒 Поставить пароль</span>
-      <button class="tg" id="crt" onclick="this.classList.toggle('on');g('crpf').classList.toggle('hidden',!this.classList.contains('on'))"></button>
+      <button class="tg" id="crt" onclick="this.classList.toggle('on'); g('crpf').style.display = this.classList.contains('on') ? 'block' : 'none'"></button>
     </div>
-    <div class="f hidden" id="crpf"><label>Пароль</label><input id="crp" type="password" placeholder="придумай пароль"></div>
+    <div class="f" id="crpf" style="display: none;"><label>Пароль</label><input id="crp" type="password" placeholder="придумай пароль"></div>
     <div class="fe" id="cre"></div>
     <div class="mr"><button class="btn btn-o" onclick="cM('m-cr')">Отмена</button><button class="btn" onclick="crRoom()">Создать</button></div>
   </div>
