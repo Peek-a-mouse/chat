@@ -351,9 +351,6 @@ import {
   getDatabase, ref, push, set, onValue, off, onChildAdded,
   serverTimestamp, query, orderByChild, limitToLast, get, remove, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import {
-  getStorage, ref as sr, uploadBytes, getDownloadURL
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 // ╔═══════════════════════════════════════════╗
 // ║  ВСТАВЬТЕ ДАННЫЕ ИЗ FIREBASE CONSOLE     ║
@@ -372,7 +369,6 @@ const cfg = {
 const fbApp = initializeApp(cfg);
 const auth  = getAuth(fbApp);
 const db    = getDatabase(fbApp);
-const st    = getStorage(fbApp);
 
 let me=null, curCh=null, curType=null, msgsRef=null;
 let files=[], tTmo=null, pRoom=null;
@@ -518,10 +514,11 @@ window.openGen=()=>openCh('general','general','Общий чат','🌐','Для
 
 // CLEAR HISTORY
 window.clearHistory=async()=>{
-  if(!curCh||!curType) return;
-  const canClear = isSU() || (curType==='room');
-  if(!canClear){toast('⛔ Нет прав');return;}
-  if(!confirm('Удалить всю историю сообщений?')) return;
+  if(!curType) return;
+  const isSuperU = isSU();
+  const isRoomOwner = curType==='room';
+  if(!isSuperU && !isRoomOwner){toast('⛔ Нет прав');return;}
+  if(!confirm('Удалить всю историю сообщений в этом чате?')) return;
   const path=curType==='general'?'messages/general':curType==='room'?`messages/rooms/${curCh}`:`messages/dms/${curCh}`;
   await remove(ref(db,path));
   g('msgs').innerHTML='';
@@ -552,14 +549,15 @@ window.send=async()=>{
   if(!txt&&files.length===0)return;
   let media=[];
   if(files.length>0){
-    toast('⬆️ Загружаю...');
+    toast('⬆️ Подготовка...');
     for(const f of files){
       try{
-        const path=`media/${me.uid}/${Date.now()}_${Math.random().toString(36).slice(2)}.${f.name.split('.').pop()}`;
-        const r=sr(st,path); await uploadBytes(r,f);
-        const url=await getDownloadURL(r);
-        media.push({url,type:f.type.startsWith('image')?'image':f.type.startsWith('video')?'video':'audio'});
-      }catch(e){toast('❌ Ошибка загрузки файла');}
+        const b64=await new Promise((res,rej)=>{
+          const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f);
+        });
+        const t=f.type.startsWith('image')?'image':f.type.startsWith('video')?'video':'audio';
+        media.push({url:b64,type:t,name:f.name});
+      }catch(e){toast('❌ Ошибка чтения файла');}
     }
     files=[]; g('chips').innerHTML='';
   }
@@ -596,10 +594,14 @@ function listenTyping(ch){
 // FILES
 window.hFiles=flist=>{
   for(const f of flist){
-    if(f.size>25*1024*1024){toast('❌ Файл больше 25MB');continue;}
+    const isImg=f.type.startsWith('image');
+    const isVid=f.type.startsWith('video');
+    const isAud=f.type.startsWith('audio');
+    const limit=isImg?10:5; // images up to 10MB, video/audio up to 5MB
+    if(f.size>limit*1024*1024){toast(`❌ Файл больше ${limit}MB`);continue;}
     files.push(f);
     const ch=document.createElement('div'); ch.className='chip';
-    const ico=f.type.startsWith('image')?'🖼️':f.type.startsWith('video')?'🎬':'🎵';
+    const ico=isImg?'🖼️':isVid?'🎬':'🎵';
     ch.innerHTML=`${ico} ${esc(f.name.slice(0,18))} <button class="cx" onclick="rmF(${files.length-1},this)">×</button>`;
     g('chips').appendChild(ch);
   }
