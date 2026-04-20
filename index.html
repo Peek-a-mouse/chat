@@ -177,6 +177,12 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--txt);color:var(--bg2);border-radius:9px;padding:8px 16px;font-size:13px;box-shadow:var(--sh2);z-index:999;opacity:0;pointer-events:none;transition:opacity .3s;white-space:nowrap;}
 #toast.s{opacity:1;}
 
+/* ── DELETE BUTTON ── */
+.del-btn{width:22px;height:22px;border:none;background:transparent;color:var(--txt3);cursor:pointer;font-size:13px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0;transition:all .15s;margin-left:auto;}
+.ci:hover .del-btn{opacity:1;}
+.del-btn:hover{background:#fee2e2;color:var(--red);}
+.superuser-badge{font-size:9px;background:#7c3aed;color:#fff;border-radius:4px;padding:1px 5px;font-weight:700;letter-spacing:.3px;margin-left:4px;vertical-align:middle;}
+
 /* ── MOBILE ── */
 @media(max-width:660px){
   #sb{width:100%;position:absolute;z-index:50;height:100%;transform:translateX(-100%);transition:transform .25s;}
@@ -269,7 +275,7 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
         <button class="icb hbg" onclick="togSB()" style="display:none">☰</button>
         <div class="ch-ico2" id="hico">🌐</div>
         <div><div class="cht" id="htit">Общий</div><div class="chs" id="hsub"></div></div>
-        <div class="chr"><button class="icb" onclick="togUP()" title="Участники">👥</button></div>
+        <div class="chr"><button class="icb" id="clr-hist-btn" onclick="clearHistory()" title="Очистить историю" style="display:none">🗑️</button><button class="icb" onclick="togUP()" title="Участники">👥</button></div>
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="tl" id="tl"></div>
@@ -371,6 +377,10 @@ const st    = getStorage(fbApp);
 let me=null, curCh=null, curType=null, msgsRef=null;
 let files=[], tTmo=null, pRoom=null;
 
+// ── SUPERUSER ──
+const SUPERUSER = { login: 'max', password: 'yura086004' };
+function isSU(){ return me && me.name.toLowerCase() === SUPERUSER.login && me.isSU; }
+
 // utils
 const g  = id => document.getElementById(id);
 window.g = g;
@@ -414,13 +424,7 @@ window.doUp=async()=>{
 };
 
 // LOGIN
-window.doIn=async()=>{
-  const login=g('li').value.trim().toLowerCase().replace(/\s+/g,'_');
-  const pass=g('lp').value; const err=g('le');
-  if(!login||!pass) return err.textContent='Введи логин и пароль';
-  try{await signInWithEmailAndPassword(auth,login+'@chatwave.app',pass);err.textContent='';}
-  catch(e){err.textContent=fErr(e.code);}
-};
+window.doIn=async()=>{\n  const login=g('li').value.trim().toLowerCase().replace(/\s+/g,'_');\n  const pass=g('lp').value; const err=g('le');\n  if(!login||!pass) return err.textContent='Введи логин и пароль';\n  // Superuser check\n  if(login===SUPERUSER.login&&pass===SUPERUSER.password){\n    try{\n      const cred=await signInWithEmailAndPassword(auth,login+'@chatwave.app',pass);\n      me={...me,isSU:true}; err.textContent='';\n    }catch(e){\n      // If superuser account doesn't exist yet, create it\n      try{\n        const cred=await createUserWithEmailAndPassword(auth,login+'@chatwave.app',pass);\n        await updateProfile(cred.user,{displayName:login});\n        await set(ref(db,`users/${cred.user.uid}`),{uid:cred.user.uid,name:login,online:true,at:serverTimestamp()});\n        me={...me,isSU:true}; err.textContent='';\n      }catch(e2){err.textContent=fErr(e2.code);}\n    }\n    return;\n  }\n  try{await signInWithEmailAndPassword(auth,login+'@chatwave.app',pass);err.textContent='';}\n  catch(e){err.textContent=fErr(e.code);}\n};
 
 // GOOGLE
 window.doG=async()=>{
@@ -441,13 +445,16 @@ window.doOut=async()=>{
 // AUTH STATE
 onAuthStateChanged(auth,async user=>{
   if(user){
-    me={uid:user.uid,name:user.displayName||user.email.split('@')[0]};
+    const name=user.displayName||user.email.split('@')[0];
+    const wasSU = me && me.isSU;
+    const isSuperU = wasSU || name.toLowerCase()===SUPERUSER.login;
+    me={uid:user.uid,name,isSU:isSuperU};
     await set(ref(db,`users/${me.uid}/online`),true);
     onDisconnect(ref(db,`users/${me.uid}/online`)).set(false);
     g('auth').style.display='none';
     g('app').classList.remove('h');
     g('mava').textContent=ini(me.name);
-    g('mn').textContent=me.name;
+    g('mn').textContent=me.name+(isSuperU?'<span class="superuser-badge">SU</span>':'');
     ldRooms(); ldDMs(); ldUsers();
     openGen();
   }else{
@@ -470,12 +477,34 @@ function openCh(id,type,title,icon,sub){
   const c=g('msgs'); c.innerHTML='';
   if(msgsRef)off(msgsRef);
   const path=type==='general'?'messages/general':type==='room'?`messages/rooms/${id}`:`messages/dms/${id}`;
-  msgsRef=query(ref(db,path),orderByChild('ts'),limitToLast(100));
+  msgsRef=query(ref(db,path),orderByChild('ts'),limitToLast(200));
   onChildAdded(msgsRef,snap=>{renderMsg(snap.val(),c);c.scrollTop=c.scrollHeight;});
   listenTyping(id);
+  // Show clear-history button for SU in general chat, or for SU/room owner in room
+  const clrBtn=g('clr-hist-btn');
+  if(clrBtn) clrBtn.style.display='none';
+  if(type==='general'&&isSU()&&clrBtn) clrBtn.style.display='';
+  if(type==='room'&&clrBtn){
+    get(ref(db,`rooms/${id}`)).then(s=>{
+      const r=s.val();
+      if(r&&(isSU()||r.createdBy===me.uid)) clrBtn.style.display='';
+    });
+  }
   if(window.innerWidth<=660) g('sb').classList.remove('open');
 }
 window.openGen=()=>openCh('general','general','Общий чат','🌐','Для всех пользователей');
+
+// CLEAR HISTORY
+window.clearHistory=async()=>{
+  if(!curCh||!curType) return;
+  const canClear = isSU() || (curType==='room');
+  if(!canClear){toast('⛔ Нет прав');return;}
+  if(!confirm('Удалить всю историю сообщений?')) return;
+  const path=curType==='general'?'messages/general':curType==='room'?`messages/rooms/${curCh}`:`messages/dms/${curCh}`;
+  await remove(ref(db,path));
+  g('msgs').innerHTML='';
+  toast('🗑️ История удалена');
+};
 
 // RENDER MSG
 function renderMsg(msg,c){
@@ -579,15 +608,25 @@ function ldRooms(){
     const rooms=snap.val()||{}; const l=g('rl'); l.innerHTML='';
     if(!Object.keys(rooms).length){l.innerHTML='<div class="ni">Пока нет комнат</div>';return;}
     Object.values(rooms).forEach(room=>{
+      const canDel = me && (isSU() || room.createdBy===me.uid);
       const el=document.createElement('div'); el.className='ci'; el.id='chi-'+room.id;
       el.innerHTML=`<div class="cico">${room.hasPassword?'🔒':'#️⃣'}</div>
         <div class="ci-inf"><div class="cn">${esc(room.name)}</div>
-        <div class="cp">${room.lastMessage?esc(room.lastMessage):'Нет сообщений'}</div></div>`;
-      el.onclick=()=>joinRoom(room);
+        <div class="cp">${room.lastMessage?esc(room.lastMessage):'Нет сообщений'}</div></div>`
+        +(canDel?`<button class="del-btn" title="Удалить комнату" onclick="delRoom(event,'${room.id}','${esc(room.name)}')">🗑</button>`:'');
+      el.onclick=(e)=>{ if(!e.target.closest('.del-btn')) joinRoom(room); };
       l.appendChild(el);
     });
   });
 }
+window.delRoom=async(e,id,name)=>{
+  e.stopPropagation();
+  if(!confirm(`Удалить комнату "${name}" и всю её историю?`)) return;
+  await remove(ref(db,`rooms/${id}`));
+  await remove(ref(db,`messages/rooms/${id}`));
+  if(curCh===id){ curCh=null; curType=null; g('cv').classList.remove('v'); g('wlc').classList.remove('hidden'); }
+  toast(`🗑️ Комната "${name}" удалена`);
+};
 function joinRoom(room){
   if(room.hasPassword){pRoom=room;g('epi').value='';g('epe').textContent='';oM('m-rp');}
   else enRoom(room);
