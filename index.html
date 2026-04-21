@@ -123,6 +123,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 .bbl img{max-width:240px;max-height:190px;border-radius:7px;display:block;margin-top:5px;cursor:pointer;}
 .bbl video{max-width:240px;border-radius:7px;display:block;margin-top:5px;}
 .bbl audio{display:block;margin-top:5px;width:195px;}
+.yt-wrap{margin-top:6px;border-radius:8px;overflow:hidden;width:260px;max-width:100%;}
+.yt-wrap iframe{width:260px;height:147px;display:block;}
 
 /* ── INPUT ── */
 .ia{background:var(--bg2);border-top:1px solid var(--border);padding:8px 14px 11px;}
@@ -208,6 +210,17 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 .cico-m{background:linear-gradient(135deg,#93c5fd,#3b82f6)!important;color:#fff!important;border-color:#93c5fd!important;}
 .cico-f{background:linear-gradient(135deg,#fca5a5,#ef4444)!important;color:#fff!important;border-color:#fca5a5!important;}
 /* ── SU KICK/DEL BUTTONS ── */
+
+/* ── SOUND & IGNORE BUTTONS ── */
+.sound-toggle{width:28px;height:28px;border:1.5px solid var(--border);background:var(--bg3);border-radius:7px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;}
+.sound-toggle:hover{border-color:var(--acc);background:var(--acc-l);}
+.sound-toggle.on{border-color:#16a34a;background:#f0fdf4;color:#16a34a;}
+.sound-toggle.off{border-color:var(--border2);color:var(--txt3);}
+.ignore-btn{padding:4px 8px;border:1.5px solid var(--border2);background:var(--bg3);color:var(--txt2);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;}
+.ignore-btn:hover{border-color:var(--red);color:var(--red);background:#fee2e2;}
+.ignore-btn.ignored{border-color:var(--red);color:var(--red);background:#fee2e2;}
+.ignore-banner{background:#fee2e2;border:1.5px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#7f1d1d;text-align:center;margin:8px 0;}
+
 .kick-btn{width:20px;height:20px;border:none;background:transparent;color:var(--txt3);cursor:pointer;font-size:12px;border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0;transition:all .15s;padding:0;}
 .ui:hover .kick-btn{opacity:1;}
 .kick-btn:hover{background:#fef3c7;color:#d97706;}
@@ -297,7 +310,7 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
         <button class="icb hbg" onclick="togSB()" style="display:none">☰</button>
         <div class="ch-ico2" id="hico">🌐</div>
         <div><div class="cht" id="htit">Общий</div><div class="chs" id="hsub"></div></div>
-        <div class="chr"><button class="icb" id="clr-hist-btn" onclick="clearHistory()" title="Очистить историю" style="display:none">🗑️</button><button class="icb" onclick="togUP()" title="Участники">👥</button></div>
+        <div class="chr"><button class="icb" id="clr-hist-btn" onclick="clearHistory()" title="Очистить историю" style="display:none">🗑️</button><button class="sound-toggle on" id="sound-btn" title="Звук личных сообщений" onclick="togSound()">🔔</button><button class="icb" onclick="togUP()" title="Участники">👥</button></div>
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="tl" id="tl"></div>
@@ -515,7 +528,7 @@ onAuthStateChanged(auth,async user=>{
     mavaEl.textContent=ini(me.name);
     mavaEl.className='ma '+(gender==='f'?'mava-f':'mava-m');
     g('mn').innerHTML=me.name+(isSuperU?'<span class="superuser-badge">SU</span>':'');
-    ldRooms(); ldDMs(); ldUsers();
+    ldRooms(); ldDMs(); ldUsers(); ldIgnores();
     openGen();
   }else{
     me=null;
@@ -538,7 +551,17 @@ function openCh(id,type,title,icon,sub){
   if(msgsRef)off(msgsRef);
   const path=type==='general'?'messages/general':type==='room'?`messages/rooms/${id}`:`messages/dms/${id}`;
   msgsRef=query(ref(db,path),orderByChild('ts'),limitToLast(200));
-  onChildAdded(msgsRef,snap=>{renderMsg(snap.val(),c);c.scrollTop=c.scrollHeight;});
+  let _firstLoad=true; let _lastTs=0;
+  onChildAdded(msgsRef,snap=>{
+    const m=snap.val();
+    if(isIgnored(m.uid)) return; // skip ignored
+    renderMsg(m,c); c.scrollTop=c.scrollHeight;
+    // DM sound: only on new messages after page load, not own
+    if(!_firstLoad && curType==='dm' && m.uid!==me?.uid && m.ts>_lastTs) playDMSound();
+    if(m.ts>_lastTs) _lastTs=m.ts;
+  });
+  // Clear firstLoad flag after short delay
+  setTimeout(()=>_firstLoad=false, 1500);
   listenTyping(id);
   // Show clear-history button for SU in general chat, or for SU/room owner in room
   const clrBtn=g('clr-hist-btn');
@@ -572,10 +595,17 @@ function renderMsg(msg,c){
   const own=msg.uid===me?.uid;
   const t=new Date(msg.ts).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
   let med='';
+  // Parse YouTube links from text
+  const ytRe=/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{11})/g;
+  let ytMatch; const ytEmbeds=[];
+  if(msg.text){let tmp=msg.text;while((ytMatch=ytRe.exec(tmp))!==null)ytEmbeds.push(ytMatch[1]);}
   (msg.media||[]).forEach(m=>{
     if(m.type==='image')med+=`<img src="${m.url}" onclick="openLB('${m.url}')" loading="lazy">`;
-    else if(m.type==='video')med+=`<video src="${m.url}" controls></video>`;
+    else if(m.type==='video')med+=`<video src="${m.url}" controls style="max-width:260px;border-radius:8px;display:block;margin-top:5px;"></video>`;
     else med+=`<audio src="${m.url}" controls></audio>`;
+  });
+  ytEmbeds.forEach(vid=>{
+    med+=`<div class="yt-wrap"><iframe src="https://www.youtube.com/embed/${vid}" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe></div>`;
   });
   const d=document.createElement('div'); d.className='msg'+(own?' ow':'');
   // Determine gender for avatar color
@@ -643,7 +673,7 @@ window.hFiles=flist=>{
     const isImg=f.type.startsWith('image');
     const isVid=f.type.startsWith('video');
     const isAud=f.type.startsWith('audio');
-    const limit=isImg?10:isAud?20:5; // images up to 10MB, audio up to 20MB, video up to 5MB
+    const limit=isImg?10:isAud?20:isVid?50:5; // images 10MB, audio 20MB, video 50MB
     if(f.size>limit*1024*1024){toast(`❌ Файл больше ${limit}MB`);continue;}
     files.push(f);
     const ch=document.createElement('div'); ch.className='chip';
@@ -783,15 +813,71 @@ function ldUsers(){
       // SU gets kick/ban buttons per user
       const suBtns=isSU()?`<button class="kick-btn" title="Кикнуть из чата" onclick="kickUser(event,'${u.uid}','${esc(u.name)}')">⚡</button>
         <button class="kick-btn del-u-btn" title="Удалить аккаунт" onclick="delUser(event,'${u.uid}','${esc(u.name)}')">🗑</button>`:'';
+      const igClass=ignoredUsers&&ignoredUsers[u.uid]?'ignored':'';
+      const igTitle=ignoredUsers&&ignoredUsers[u.uid]?'Разблокировать':'Заблокировать';
+      const igBtn=u.uid!==me.uid?`<button class="kick-btn ${igClass}" title="${igTitle}" onclick="toggleIgnore('${u.uid}','${esc(u.name)}');ldUsers();" style="font-size:11px">${ignoredUsers&&ignoredUsers[u.uid]?'✅':'🚫'}</button>`:'';
       el.innerHTML=`<div class="uav ${gClass}">${ini(u.name)}</div>
-        <span class="un" style="flex:1">${esc(u.name)}</span><div class="ud on"></div>${suBtns}`;
+        <span class="un" style="flex:1">${esc(u.name)}</span><div class="ud on"></div>${igBtn}${suBtns}`;
       if(u.uid!==me.uid)el.onclick=(e)=>{if(!e.target.closest('.kick-btn'))stDM(u);};
       l.appendChild(el);
     });
   });
 }
 
+
+// ── SOUND NOTIFICATION ──
+let dmSoundOn = localStorage ? (localStorage.getItem('dmSound')!=='off') : true;
+function togSound(){
+  dmSoundOn=!dmSoundOn;
+  if(localStorage) localStorage.setItem('dmSound', dmSoundOn?'on':'off');
+  const btn=g('sound-btn');
+  if(btn){btn.textContent=dmSoundOn?'🔔':'🔕';btn.className='sound-toggle '+(dmSoundOn?'on':'off');}
+  toast(dmSoundOn?'🔔 Звук ЛС включён':'🔕 Звук ЛС выключен');
+}
+window.togSound=togSound;
+
+function playDMSound(){
+  if(!dmSoundOn)return;
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator(); const g2=ctx.createGain();
+    o.connect(g2); g2.connect(ctx.destination);
+    o.frequency.setValueAtTime(880,ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.15);
+    g2.gain.setValueAtTime(0.18,ctx.currentTime);
+    g2.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);
+    o.start(ctx.currentTime); o.stop(ctx.currentTime+0.4);
+  }catch(e){}
+}
+
+// ── IGNORE SYSTEM ──
+let ignoredUsers = {};
+async function ldIgnores(){
+  if(!me) return;
+  const snap=await get(ref(db,`users/${me.uid}/ignores`));
+  ignoredUsers=snap.val()||{};
+}
+window.toggleIgnore=async(uid,name)=>{
+  if(!me) return;
+  if(ignoredUsers[uid]){
+    await remove(ref(db,`users/${me.uid}/ignores/${uid}`));
+    delete ignoredUsers[uid];
+    toast(`✅ ${name} разблокирован`);
+  } else {
+    await set(ref(db,`users/${me.uid}/ignores/${uid}`),true);
+    ignoredUsers[uid]=true;
+    toast(`🚫 ${name} заблокирован`);
+  }
+};
+function isIgnored(uid){ return !!(ignoredUsers&&ignoredUsers[uid]); }
+
+// ── YOUTUBE LINK DETECTION IN SEND ──
+function hasYTLink(txt){
+  return /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)/.test(txt);
+}
+
 window.togUP=()=>g('up').classList.toggle('open');
+
 window.togSB=()=>g('sb').classList.toggle('open');
 
 // KICK — выбросить пользователя (отметить offline)
