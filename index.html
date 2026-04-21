@@ -453,8 +453,8 @@ window.swTab=t=>{
 
 // REGISTER
 window.doUp=async()=>{
-  const rawLogin=g('ri').value.trim().replace(/[^a-zа-яёA-ZА-ЯЁ0-9_]/gi,'');
-  const login=rawLogin.toLowerCase().replace(/[^a-zа-яё0-9_]/gi,'');
+  const rawLogin=g('ri').value.trim().replace(/[^a-z\u0430-\u044f\u0451A-Z\u0410-\u042f\u04510-9_]/gi,'');
+  const login=rawLogin.toLowerCase().replace(/[^a-z\u0430-\u044f\u04510-9_]/gi,'');
   const displayName=rawLogin; // preserve original casing
   const pass=g('rp').value; const err=g('re');
   if(!login) return err.textContent='Придумай логин';
@@ -464,6 +464,8 @@ window.doUp=async()=>{
     const cred=await createUserWithEmailAndPassword(auth,login+'@chatwave.app',pass);
     await updateProfile(cred.user,{displayName:displayName});
     await set(ref(db,`users/${cred.user.uid}`),{uid:cred.user.uid,name:displayName,gender,online:true,at:serverTimestamp()});
+    // ── Если логин был в чёрном списке — снимаем блокировку после новой регистрации ──
+    await remove(ref(db,`blocked_logins/${login}`));
     err.textContent='';
   }catch(e){err.textContent=fErr(e.code);}
 };
@@ -474,12 +476,28 @@ window.doIn=async()=>{
   const pass=g('lp').value; const err=g('le');
   if(!rawLogin||!pass) return err.textContent='Введи логин и пароль';
   const isSuperLogin = rawLogin===SUPERUSER.login && pass===SUPERUSER.password;
+  // ── Проверка чёрного списка удалённых логинов (кроме суперюзера) ──
+  if(!isSuperLogin){
+    const loginKey=rawLogin.replace(/[^a-z\u0430-\u044f\u0451a-z0-9_]/gi,'');
+    const blSnap=await get(ref(db,`blocked_logins/${loginKey}`));
+    if(blSnap.exists()){
+      return err.textContent='Этот логин удалён администратором. Зарегистрируйся заново.';
+    }
+  }
   try{
     const cred=await signInWithEmailAndPassword(auth,rawLogin+'@chatwave.app',pass);
     if(isSuperLogin){
       me={...me, isSU:true};
       // Ensure superuser gender = m
       await set(ref(db,`users/${cred.user.uid}/gender`),'m');
+    }
+    // ── Дополнительная проверка: аккаунт удалён но Auth сессия ещё жива ──
+    if(!isSuperLogin){
+      const uChk=await get(ref(db,`users/${cred.user.uid}`));
+      if(!uChk.exists()){
+        await signOut(auth);
+        return err.textContent='Аккаунт не найден. Зарегистрируйся заново.';
+      }
     }
     err.textContent='';
   }catch(e){
@@ -509,6 +527,22 @@ onAuthStateChanged(auth,async user=>{
     const rawName=user.displayName||user.email.split('@')[0];
     const wasSU = me && me.isSU;
     const isSuperU = wasSU || rawName.toLowerCase()===SUPERUSER.login;
+    // ── Если аккаунт не суперюзер — проверяем что он есть в DB и не в чёрном списке ──
+    if(!isSuperU){
+      const loginKey=rawName.toLowerCase().replace(/[^a-z\u0430-\u044f\u04510-9_]/gi,'');
+      const blSnap=await get(ref(db,`blocked_logins/${loginKey}`));
+      if(blSnap.exists()){
+        // Логин заблокирован — принудительно выходим
+        await signOut(auth);
+        return;
+      }
+      const existSnap=await get(ref(db,`users/${user.uid}`));
+      if(!existSnap.exists()){
+        // Пользователь удалён из DB — принудительно выходим
+        await signOut(auth);
+        return;
+      }
+    }
     // Fetch gender from DB
     const uSnap=await get(ref(db,`users/${user.uid}`));
     const uData=uSnap.val()||{};
@@ -909,18 +943,29 @@ window.kickUser=async(e,uid,name)=>{
   toast(`⚡ ${name} кикнут`);
 };
 
-// DELETE USER — удалить аккаунт из БД (можно перерегистрировать логин)
+// DELETE USER — удалить аккаунт из БД + заблокировать логин
 window.delUser=async(e,uid,name)=>{
   e.stopPropagation();
   if(!isSU()){toast('⛔ Нет прав');return;}
-  if(!confirm(`Удалить аккаунт "${name}" полностью?\nПосле удаления логин можно будет зарегистрировать снова.`))return;
+  if(!confirm(`Удалить аккаунт "${name}" полностью?\nЛогин освободится — его можно будет зарегистрировать заново.`))return;
+  // 1. Получаем логин пользователя из DB перед удалением
+  const uSnap=await get(ref(db,`users/${uid}`));
+  const uData=uSnap.val()||{};
+  const loginKey=(uData.name||name).toLowerCase().replace(/[^a-zа-яё0-9_]/gi,'');
+  // 2. Добавляем логин в чёрный список (blocked_logins)
+  //    Это заблокирует вход даже если Auth-аккаунт ещё жив
+  await set(ref(db,`blocked_logins/${loginKey}`),{deletedAt:Date.now(),deletedBy:me.uid,name:uData.name||name});
+  // 3. Удаляем данные пользователя из DB
   await remove(ref(db,`users/${uid}`));
+  // 4. Удаляем DM-чаты этого пользователя
   const dmsSnap=await get(ref(db,'dms'));
   const dms=dmsSnap.val()||{};
   for(const [id] of Object.entries(dms)){
     if(id.includes(uid)) await remove(ref(db,`dms/${id}`));
   }
-  toast(`🗑️ Аккаунт "${name}" удалён`);
+  // 5. Принудительно кикаем (на случай если сейчас онлайн)
+  await set(ref(db,`users/${uid}/kicked`),Date.now());
+  toast(`🗑️ Аккаунт "${name}" удалён. Логин заблокирован до повторной регистрации.`);
 };
 
 
