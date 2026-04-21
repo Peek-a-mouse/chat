@@ -455,19 +455,51 @@ window.swTab=t=>{
 window.doUp=async()=>{
   const rawLogin=g('ri').value.trim().replace(/[^a-z\u0430-\u044f\u0451A-Z\u0410-\u042f\u04510-9_]/gi,'');
   const login=rawLogin.toLowerCase().replace(/[^a-z\u0430-\u044f\u04510-9_]/gi,'');
-  const displayName=rawLogin; // preserve original casing
+  const displayName=rawLogin;
   const pass=g('rp').value; const err=g('re');
   if(!login) return err.textContent='Придумай логин';
   if(pass.length<6) return err.textContent='Пароль минимум 6 символов';
   const gender = regGender;
-  try{
-    const cred=await createUserWithEmailAndPassword(auth,login+'@chatwave.app',pass);
-    await updateProfile(cred.user,{displayName:displayName});
-    await set(ref(db,`users/${cred.user.uid}`),{uid:cred.user.uid,name:displayName,gender,online:true,at:serverTimestamp()});
-    // ── Если логин был в чёрном списке — снимаем блокировку после новой регистрации ──
+  const email = login+'@chatwave.app';
+
+  const finishReg = async(uid) => {
+    await updateProfile(auth.currentUser,{displayName:displayName});
+    await set(ref(db,`users/${uid}`),{uid,name:displayName,gender,online:true,at:serverTimestamp()});
     await remove(ref(db,`blocked_logins/${login}`));
     err.textContent='';
-  }catch(e){err.textContent=fErr(e.code);}
+  };
+
+  try{
+    const cred=await createUserWithEmailAndPassword(auth,email,pass);
+    await finishReg(cred.user.uid);
+  }catch(e){
+    // Если логин уже есть в Firebase Auth — проверяем, есть ли он в БД
+    if(e.code==='auth/email-already-in-use'){
+      try{
+        // Пробуем войти с этим логином и паролем
+        const cred2=await signInWithEmailAndPassword(auth,email,pass);
+        const uSnap=await get(ref(db,`users/${cred2.user.uid}`));
+        if(!uSnap.exists()){
+          // Аккаунт в Auth есть, но в БД нет — это удалённый пользователь.
+          // Просто пересоздаём профиль в БД с тем же Auth-аккаунтом.
+          await finishReg(cred2.user.uid);
+        } else {
+          // Аккаунт живой — логин реально занят
+          await signOut(auth);
+          err.textContent='Логин уже занят';
+        }
+      }catch(e2){
+        if(e2.code==='auth/wrong-password'||e2.code==='auth/invalid-credential'){
+          // Auth-аккаунт с таким логином существует с другим паролем — логин занят
+          err.textContent='Логин уже занят другим пользователем';
+        } else {
+          err.textContent=fErr(e2.code);
+        }
+      }
+    } else {
+      err.textContent=fErr(e.code);
+    }
+  }
 };
 
 // LOGIN
@@ -476,14 +508,7 @@ window.doIn=async()=>{
   const pass=g('lp').value; const err=g('le');
   if(!rawLogin||!pass) return err.textContent='Введи логин и пароль';
   const isSuperLogin = rawLogin===SUPERUSER.login && pass===SUPERUSER.password;
-  // ── Проверка чёрного списка удалённых логинов (кроме суперюзера) ──
-  if(!isSuperLogin){
-    const loginKey=rawLogin.replace(/[^a-z\u0430-\u044f\u0451a-z0-9_]/gi,'');
-    const blSnap=await get(ref(db,`blocked_logins/${loginKey}`));
-    if(blSnap.exists()){
-      return err.textContent='Этот логин удалён администратором. Зарегистрируйся заново.';
-    }
-  }
+
   try{
     const cred=await signInWithEmailAndPassword(auth,rawLogin+'@chatwave.app',pass);
     if(isSuperLogin){
@@ -952,10 +977,7 @@ window.delUser=async(e,uid,name)=>{
   const uSnap=await get(ref(db,`users/${uid}`));
   const uData=uSnap.val()||{};
   const loginKey=(uData.name||name).toLowerCase().replace(/[^a-zа-яё0-9_]/gi,'');
-  // 2. Добавляем логин в чёрный список (blocked_logins)
-  //    Это заблокирует вход даже если Auth-аккаунт ещё жив
-  await set(ref(db,`blocked_logins/${loginKey}`),{deletedAt:Date.now(),deletedBy:me.uid,name:uData.name||name});
-  // 3. Удаляем данные пользователя из DB
+  // 2. Удаляем данные пользователя из DB
   await remove(ref(db,`users/${uid}`));
   // 4. Удаляем DM-чаты этого пользователя
   const dmsSnap=await get(ref(db,'dms'));
@@ -965,7 +987,7 @@ window.delUser=async(e,uid,name)=>{
   }
   // 5. Принудительно кикаем (на случай если сейчас онлайн)
   await set(ref(db,`users/${uid}/kicked`),Date.now());
-  toast(`🗑️ Аккаунт "${name}" удалён. Логин заблокирован до повторной регистрации.`);
+  toast(`🗑️ Аккаунт "${name}" удалён. Логин освобождён для повторной регистрации.`);
 };
 
 
