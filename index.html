@@ -385,7 +385,7 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged, updateProfile
+  signOut, onAuthStateChanged, updateProfile, updatePassword
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
   getDatabase, ref, push, set, onValue, off, onChildAdded,
@@ -462,39 +462,34 @@ window.doUp=async()=>{
   const gender = regGender;
   const email = login+'@chatwave.app';
 
-  const finishReg = async(uid) => {
+  const finishProfile = async(uid) => {
     await updateProfile(auth.currentUser,{displayName:displayName});
     await set(ref(db,`users/${uid}`),{uid,name:displayName,gender,online:true,at:serverTimestamp()});
+    await remove(ref(db,`freed_logins/${login}`));
     await remove(ref(db,`blocked_logins/${login}`));
     err.textContent='';
   };
 
   try{
     const cred=await createUserWithEmailAndPassword(auth,email,pass);
-    await finishReg(cred.user.uid);
+    await finishProfile(cred.user.uid);
   }catch(e){
-    // Если логин уже есть в Firebase Auth — проверяем, есть ли он в БД
     if(e.code==='auth/email-already-in-use'){
-      try{
-        // Пробуем войти с этим логином и паролем
-        const cred2=await signInWithEmailAndPassword(auth,email,pass);
-        const uSnap=await get(ref(db,`users/${cred2.user.uid}`));
-        if(!uSnap.exists()){
-          // Аккаунт в Auth есть, но в БД нет — это удалённый пользователь.
-          // Просто пересоздаём профиль в БД с тем же Auth-аккаунтом.
-          await finishReg(cred2.user.uid);
-        } else {
-          // Аккаунт живой — логин реально занят
-          await signOut(auth);
-          err.textContent='Логин уже занят';
+      // Проверяем: возможно логин был освобождён (аккаунт удалён суперюзером)
+      const flSnap=await get(ref(db,`freed_logins/${login}`));
+      if(flSnap.exists()){
+        const {resetToken}=flSnap.val();
+        try{
+          // Входим в старый Auth-аккаунт через сохранённый временный токен
+          const cred2=await signInWithEmailAndPassword(auth,email,resetToken);
+          // Меняем пароль на новый, указанный пользователем
+          await updatePassword(cred2.user,pass);
+          await finishProfile(cred2.user.uid);
+        }catch(e2){
+          err.textContent='Ошибка восстановления логина: '+fErr(e2.code);
         }
-      }catch(e2){
-        if(e2.code==='auth/wrong-password'||e2.code==='auth/invalid-credential'){
-          // Auth-аккаунт с таким логином существует с другим паролем — логин занят
-          err.textContent='Логин уже занят другим пользователем';
-        } else {
-          err.textContent=fErr(e2.code);
-        }
+      } else {
+        err.textContent='Логин уже занят';
       }
     } else {
       err.textContent=fErr(e.code);
@@ -968,16 +963,19 @@ window.kickUser=async(e,uid,name)=>{
   toast(`⚡ ${name} кикнут`);
 };
 
-// DELETE USER — удалить аккаунт из БД + заблокировать логин
+// DELETE USER — удалить аккаунт из БД, освободить логин
 window.delUser=async(e,uid,name)=>{
   e.stopPropagation();
   if(!isSU()){toast('⛔ Нет прав');return;}
-  if(!confirm(`Удалить аккаунт "${name}" полностью?\nЛогин освободится — его можно будет зарегистрировать заново.`))return;
-  // 1. Получаем логин пользователя из DB перед удалением
+  if(!confirm(`Удалить аккаунт "${name}" полностью?\nЛогин освободится для повторной регистрации.`))return;
+  // 1. Получаем данные пользователя из DB
   const uSnap=await get(ref(db,`users/${uid}`));
   const uData=uSnap.val()||{};
   const loginKey=(uData.name||name).toLowerCase().replace(/[^a-zа-яё0-9_]/gi,'');
-  // 2. Удаляем данные пользователя из DB
+  // 2. Сохраняем временный токен — он позволит новому пользователю "перехватить" Auth-аккаунт
+  const resetToken=Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
+  await set(ref(db,`freed_logins/${loginKey}`),{uid,resetToken,freedAt:Date.now()});
+  // 3. Удаляем данные пользователя из DB
   await remove(ref(db,`users/${uid}`));
   // 4. Удаляем DM-чаты этого пользователя
   const dmsSnap=await get(ref(db,'dms'));
@@ -987,7 +985,7 @@ window.delUser=async(e,uid,name)=>{
   }
   // 5. Принудительно кикаем (на случай если сейчас онлайн)
   await set(ref(db,`users/${uid}/kicked`),Date.now());
-  toast(`🗑️ Аккаунт "${name}" удалён. Логин освобождён для повторной регистрации.`);
+  toast(`🗑️ Аккаунт "${name}" удалён. Логин освобождён.`);
 };
 
 
