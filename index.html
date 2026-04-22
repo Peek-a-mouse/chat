@@ -358,13 +358,13 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
   </div>
 
   <!-- USERS -->
-  <div id="up" class="open">
+  <div id="up" class="open" onclick="if(event.target===this)togUP()">
     <div id="up-resizer" title="Потяни чтобы изменить ширину"></div>
     <div class="up-header">
       <div class="upt" style="margin:0;padding:0;border:none;">👥 Пользователи</div>
       <button class="up-close-btn" onclick="togUP()" title="Закрыть">✕</button>
     </div>
-    <div id="ul"></div>
+    <div id="ul" onclick="if(event.target===this)togUP()"></div>
   </div>
 </div>
 
