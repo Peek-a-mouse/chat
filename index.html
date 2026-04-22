@@ -218,6 +218,12 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
   .aw{padding:12px 10px;}
   .ab-sub{font-size:13px!important;}
 }
+
+/* ── USERS PANEL CLOSE BUTTON & ACTIVE TOGGLE ── */
+#togup-btn.active{background:var(--acc-l);border-color:var(--acc);color:var(--acc);}
+.up-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:0 4px 6px;border-bottom:1px solid var(--border);}
+.up-close-btn{width:28px;height:28px;border:none;background:var(--bg3);border-radius:7px;color:var(--txt2);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;}
+.up-close-btn:hover{background:var(--red);color:#fff;}
 .hbg{display:none;}
 .hidden{display:none!important;}
 
@@ -335,7 +341,7 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
         <button class="icb hbg" onclick="togSB()" style="display:none">☰</button>
         <div class="ch-ico2" id="hico">🌐</div>
         <div><div class="cht" id="htit">Общий</div><div class="chs" id="hsub"></div></div>
-        <div class="chr"><button class="icb" id="leave-room-btn" onclick="leaveRoom()" title="Выйти из комнаты" style="display:none">🚪</button><button class="icb" id="clr-hist-btn" onclick="clearHistory()" title="Очистить историю" style="display:none">🗑️</button><button class="icb" id="del-dm-btn" onclick="delDMChat()" title="Удалить личный чат" style="display:none;color:var(--red)">🗑💬</button><button class="sound-toggle on" id="sound-btn" title="Звук личных сообщений" onclick="togSound()">🔔</button><button class="icb" onclick="togUP()" title="Участники">👥</button></div>
+        <div class="chr"><button class="icb" id="leave-room-btn" onclick="leaveRoom()" title="Выйти из комнаты" style="display:none">🚪</button><button class="icb" id="clr-hist-btn" onclick="clearHistory()" title="Очистить историю" style="display:none">🗑️</button><button class="icb" id="del-dm-btn" onclick="delDMChat()" title="Удалить личный чат" style="display:none;color:var(--red)">🗑💬</button><button class="sound-toggle on" id="sound-btn" title="Звук личных сообщений" onclick="togSound()">🔔</button><button class="icb" id="togup-btn" onclick="togUP()" title="Участники">👥</button></div>
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="tl" id="tl"></div>
@@ -354,7 +360,10 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
   <!-- USERS -->
   <div id="up" class="open">
     <div id="up-resizer" title="Потяни чтобы изменить ширину"></div>
-    <div class="upt">Пользователи</div>
+    <div class="up-header">
+      <div class="upt" style="margin:0;padding:0;border:none;">👥 Пользователи</div>
+      <button class="up-close-btn" onclick="togUP()" title="Закрыть">✕</button>
+    </div>
     <div id="ul"></div>
   </div>
 </div>
@@ -1028,12 +1037,14 @@ function hasYTLink(txt){
 }
 
 window.togUP=()=>{
-  const up=g('up'); const ov=g('mob-overlay');
+  const up=g('up'); const ov=g('mob-overlay'); const btn=g('togup-btn');
   up.classList.toggle('open');
   if(up.classList.contains('open')){
     drawUsers();
+    if(btn) btn.classList.add('active');
     if(ov && window.innerWidth<=660){ ov.classList.add('on'); g('sb').classList.remove('open'); }
   } else {
+    if(btn) btn.classList.remove('active');
     if(ov) ov.classList.remove('on');
   }
 };
@@ -1051,6 +1062,7 @@ window.closeMobPanels=()=>{
   g('sb').classList.remove('open');
   g('up').classList.remove('open');
   const ov=g('mob-overlay'); if(ov) ov.classList.remove('on');
+  const btn=g('togup-btn'); if(btn) btn.classList.remove('active');
 };
 
 // KICK — выбросить пользователя (отметить offline)
