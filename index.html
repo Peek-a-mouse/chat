@@ -536,7 +536,7 @@ onAuthStateChanged(auth,async user=>{
     mavaEl.textContent=ini(me.name);
     mavaEl.className='ma '+(gender==='f'?'mava-f':'mava-m');
     g('mn').innerHTML=me.name+(isSuperU?'<span class="superuser-badge">SU</span>':'');
-    ldRooms(); ldDMs(); ldUsers(); ldIgnores();
+    ldRooms(); ldDMs(); initUsersListener(); ldIgnores();
     openGen();
   }else{
     me=null;
@@ -551,7 +551,7 @@ function openCh(id,type,title,icon,sub){
   const el=g('chi-'+id); if(el)el.classList.add('on');
   curCh=id; curType=type;
   g('wlc').classList.add('hidden');
-  ldUsers(); // refresh users panel for this context
+  ldUsers(); // update context for users panel
   g('cv').classList.add('v');
   g('hico').textContent=icon;
   g('htit').textContent=title;
@@ -835,21 +835,66 @@ function stDM(u){
 function oDMCh(id,u){openCh(id,'dm',u.name,'💬','Личные сообщения');}
 
 // USERS
-let _usersUnsub=null; // current listener for users panel
+// Global cached data — updated by persistent listeners
+let _allUsers = {};
+let _roomPresence = {};
+let _usersCtxType = null;
+let _usersCtxCh = null;
+let _presUnsub = null;
 
-function renderUsersList(usersMap, filterUids){
-  const l=g('ul'); l.innerHTML='';
-  let list=Object.values(usersMap).filter(u=>u.name.toLowerCase()!==SUPERUSER.login);
-  if(filterUids) list=list.filter(u=>filterUids.includes(u.uid));
-  else if(!isSU()) list=list.filter(u=>u.online); // general: online only (SU sees everyone)
+// Start one-time persistent listener on /users
+function initUsersListener(){
+  onValue(ref(db,'users'), snap=>{
+    _allUsers = snap.val()||{};
+    drawUsers();
+  });
+}
+
+// Call when context changes (general / room / dm)
+function ldUsers(){
+  _usersCtxType = curType||'general';
+  _usersCtxCh   = curCh;
+
+  // Unsubscribe previous presence listener
+  if(_presUnsub){ try{_presUnsub();}catch(e){} _presUnsub=null; }
+  _roomPresence = {};
+
+  if(_usersCtxType==='room' && _usersCtxCh){
+    // Subscribe to room presence
+    _presUnsub = onValue(ref(db,`presence/rooms/${_usersCtxCh}`), snap=>{
+      const m=snap.val()||{};
+      _roomPresence = Object.keys(m).filter(uid=>m[uid]===true);
+      drawUsers();
+    });
+  } else {
+    drawUsers();
+  }
+}
+
+function drawUsers(){
+  const l=g('ul'); if(!l) return;
+  l.innerHTML='';
+  const type=_usersCtxType||'general';
+  let list=Object.values(_allUsers).filter(u=>u.name.toLowerCase()!==SUPERUSER.login);
+
+  if(type==='room'){
+    // Only users currently in this room
+    list=list.filter(u=>_roomPresence.includes(u.uid));
+  } else if(type==='dm'){
+    l.innerHTML='<div class="ni">Личный чат</div>'; return;
+  } else {
+    // General: online users (SU sees all)
+    if(!isSU()) list=list.filter(u=>u.online);
+  }
+
   if(!list.length){l.innerHTML='<div class="ni">Никого нет</div>';return;}
   list.forEach(u=>{
     const gClass=u.gender==='f'?'uav-f':'uav-m';
     const el=document.createElement('div'); el.className='ui';
-    const suBtns=isSU()?`<button class="kick-btn" title="Кикнуть из чата" onclick="kickUser(event,'${u.uid}','${esc(u.name)}')">⚡</button>`:'';
+    const suBtns=isSU()?`<button class="kick-btn" title="Кикнуть" onclick="kickUser(event,'${u.uid}','${esc(u.name)}')">⚡</button>`:'';
     const igClass=ignoredUsers&&ignoredUsers[u.uid]?'ignored':'';
     const igTitle=ignoredUsers&&ignoredUsers[u.uid]?'Разблокировать':'Заблокировать';
-    const igBtn=u.uid!==me.uid?`<button class="kick-btn ${igClass}" title="${igTitle}" onclick="toggleIgnore('${u.uid}','${esc(u.name)}');refreshUsers();" style="font-size:11px">${ignoredUsers&&ignoredUsers[u.uid]?'✅':'🚫'}</button>`:'';
+    const igBtn=u.uid!==me.uid?`<button class="kick-btn ${igClass}" title="${igTitle}" onclick="toggleIgnore('${u.uid}','${esc(u.name)}');drawUsers();" style="font-size:11px">${ignoredUsers&&ignoredUsers[u.uid]?'✅':'🚫'}</button>`:'';
     el.innerHTML=`<div class="uav ${gClass}">${ini(u.name)}</div>
       <span class="un" style="flex:1">${esc(u.name)}</span><div class="ud on"></div>${igBtn}${suBtns}`;
     if(u.uid!==me.uid)el.onclick=(e)=>{if(!e.target.closest('.kick-btn'))stDM(u);};
@@ -857,30 +902,7 @@ function renderUsersList(usersMap, filterUids){
   });
 }
 
-function ldUsers(){
-  if(_usersUnsub){try{_usersUnsub();}catch(e){} _usersUnsub=null;}
-  const type=curType||'general';
-  if(type==='room' && curCh){
-    // Room: show only users present in this specific room
-    _usersUnsub=onValue(ref(db,`presence/rooms/${curCh}`),presSnap=>{
-      const presMap=presSnap.val()||{};
-      const uids=Object.keys(presMap).filter(uid=>presMap[uid]===true);
-      get(ref(db,'users')).then(usersSnap=>{
-        renderUsersList(usersSnap.val()||{}, uids);
-      });
-    });
-  } else if(type==='dm'){
-    // DM: no public user list
-    const l=g('ul'); l.innerHTML='<div class="ni">Личный чат</div>';
-  } else {
-    // General (and default): all online users
-    _usersUnsub=onValue(ref(db,'users'),snap=>{
-      renderUsersList(snap.val()||{}, null);
-    });
-  }
-}
-
-function refreshUsers(){ ldUsers(); }
+function refreshUsers(){ drawUsers(); }
 
 
 // ── SOUND NOTIFICATION ──
