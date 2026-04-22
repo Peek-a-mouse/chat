@@ -619,6 +619,16 @@ function openCh(id,type,title,icon,sub){
   const isDmParticipant = type==='dm' && me && id && id.includes(me.uid);
   if(type==='dm' && (isSU()||isDmParticipant) && clrBtn) clrBtn.style.display='';
   if(type==='dm' && (isSU()||isDmParticipant) && delDmBtn) delDmBtn.style.display='';
+  // Hide users panel in DM (not relevant for private 1-on-1 chat)
+  const upBtn=g('togup-btn'); const upPanel=g('up');
+  if(type==='dm'){
+    if(upBtn) upBtn.style.display='none';
+    if(upPanel){ upPanel.classList.remove('open'); upPanel.style.display='none'; }
+    const ov=g('mob-overlay'); if(ov) ov.classList.remove('on');
+  } else {
+    if(upBtn) upBtn.style.display='';
+    if(upPanel) upPanel.style.display='';
+  }
   if(window.innerWidth<=660) g('sb').classList.remove('open');
 }
 window.openGen=()=>{
