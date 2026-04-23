@@ -62,6 +62,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--txt);displ
 .err{color:var(--red);font-size:12px;font-weight:600;margin-top:8px;min-height:16px;}
 .div{display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--txt3);font-size:12px;}
 .div::before,.div::after{content:'';flex:1;height:1px;background:var(--border);}
+#auth,.aw,.ac,.tabs,.tab,.btn,.gender-btn,.f input{-webkit-app-region:no-drag;}
+.ac,.tabs,.tab,.btn,.gender-btn,.f input{position:relative;z-index:5;pointer-events:auto;}
 
 /* ── LAYOUT ── */
 #app{display:flex;height:100vh;overflow:hidden;}
@@ -514,6 +516,8 @@ function bindAuthUI(){
   const bindClick=(id,fn)=>{
     const el=g(id);
     if(!el||el.dataset.bound==='1') return;
+    el.addEventListener('pointerdown',e=>{ e.stopPropagation(); });
+    el.addEventListener('mousedown',e=>{ e.stopPropagation(); });
     el.addEventListener('click',e=>{ e.preventDefault(); fn(); });
     el.dataset.bound='1';
   };
