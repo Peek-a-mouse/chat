@@ -517,11 +517,11 @@ function bindAuthUI(){
     el.addEventListener('click',e=>{ e.preventDefault(); fn(); });
     el.dataset.bound='1';
   };
-  bindClick('tab-in',()=>swTab('in'));
-  bindClick('tab-up',()=>swTab('up'));
-  bindClick('btn-in',()=>doIn());
-  bindClick('btn-up',()=>doUp());
-  [['li',doIn],['lp',doIn],['ri',doUp],['rp',doUp]].forEach(([id,fn])=>{
+  bindClick('tab-in',()=>window.swTab('in'));
+  bindClick('tab-up',()=>window.swTab('up'));
+  bindClick('btn-in',()=>window.doIn());
+  bindClick('btn-up',()=>window.doUp());
+  [['li',()=>window.doIn()],['lp',()=>window.doIn()],['ri',()=>window.doUp()],['rp',()=>window.doUp()]].forEach(([id,fn])=>{
     const el=g(id);
     if(!el||el.dataset.enterBound==='1') return;
     el.addEventListener('keydown',e=>{
