@@ -709,6 +709,8 @@ window.doIn=async()=>{
 
 // LOGOUT
 window.doOut=async()=>{
+  stopHeartbeat();
+  if(_staleTimer){ clearInterval(_staleTimer); _staleTimer=null; }
   await leaveRoomPresence();
   if(me && !isSU()) await remove(ref(db,`users/${me.uid}/inRoom`));
   if(me) await set(ref(db,`users/${me.uid}/online`),false);
@@ -735,7 +737,10 @@ onAuthStateChanged(auth,async user=>{
     // Superuser is invisible — don't appear in online list
     if(!isSuperU){
       await set(ref(db,`users/${me.uid}/online`),true);
+      await set(ref(db,`users/${me.uid}/hb`),Date.now());
       onDisconnect(ref(db,`users/${me.uid}/online`)).set(false);
+      onDisconnect(ref(db,`users/${me.uid}/hb`)).set(0);
+      startHeartbeat();
     } else {
       // Ensure SU is marked offline so they're invisible
       await set(ref(db,`users/${me.uid}/online`),false);
@@ -1133,6 +1138,9 @@ function initUsersListener(){
   usersRef.on('value', valueCb);
   _uUnsubGeneral = ()=>{ usersRef.off('value', valueCb); };
 
+  // Start stale-user sweep (ghost cleanup)
+  startStaleCheck();
+
   // Sound notifications: only after seeding is done
   _uSoundRef = usersRef;
   _uSoundCb = snap=>{
@@ -1216,9 +1224,56 @@ async function forceOffline(){
   }catch(e){}
   try{ await remove(ref(db,`users/${me.uid}/inRoom`)); }catch(e){}
   try{ await set(ref(db,`users/${me.uid}/online`),false); }catch(e){}
+  try{ await set(ref(db,`users/${me.uid}/hb`),0); }catch(e){}
+  stopHeartbeat();
 }
 window.addEventListener('pagehide',()=>{ forceOffline(); });
 window.addEventListener('beforeunload',()=>{ forceOffline(); });
+
+// ── HEARTBEAT — prevents ghost users ──
+// User writes timestamp every 30s. If hb is older than 2 min → mark offline.
+const HB_INTERVAL = 30000;   // 30 seconds
+const HB_TIMEOUT  = 120000;  // 2 minutes = stale threshold
+let _hbTimer = null;
+
+function startHeartbeat(){
+  stopHeartbeat();
+  // Write immediately, then every 30s
+  _writeHB();
+  _hbTimer = setInterval(_writeHB, HB_INTERVAL);
+}
+function stopHeartbeat(){
+  if(_hbTimer){ clearInterval(_hbTimer); _hbTimer=null; }
+}
+async function _writeHB(){
+  if(!me || isSU()) return;
+  try{ await set(ref(db,`users/${me.uid}/hb`), Date.now()); }catch(e){}
+}
+
+// Called by initUsersListener — sweeps stale users once on load and periodically
+let _staleTimer = null;
+function startStaleCheck(){
+  if(_staleTimer) clearInterval(_staleTimer);
+  _sweepStale();
+  _staleTimer = setInterval(_sweepStale, 60000); // check every 60s
+}
+async function _sweepStale(){
+  try{
+    const snap = await get(ref(db,'users'));
+    const users = snap.val()||{};
+    const now = Date.now();
+    for(const u of Object.values(users)){
+      if(!u || !u.uid || isSU && u.name && u.name.toLowerCase()===SUPERUSER.login) continue;
+      if(!u.online) continue; // already offline, skip
+      const hb = u.hb || 0;
+      if(hb === 0 || (now - hb) > HB_TIMEOUT){
+        // Stale — force offline
+        try{ await set(ref(db,`users/${u.uid}/online`),false); }catch(e){}
+        try{ await remove(ref(db,`users/${u.uid}/inRoom`)); }catch(e){}
+      }
+    }
+  }catch(e){}
+}
 
 
 // ── SOUND NOTIFICATION ──
